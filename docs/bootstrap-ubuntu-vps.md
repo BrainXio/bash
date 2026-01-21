@@ -1,35 +1,57 @@
 # Bootstrap Ubuntu VPS Script
 
 ## Overview
-`bootstrap-ubuntu-vps.sh` is a one-time bootstrap script for Ubuntu VPS. It creates a non-root sudo user, hardens SSH (disables root login, password auth), installs and configures security tools (Fail2Ban, UFW, unattended-upgrades, rkhunter, lynis, aide, clamav), sets up auto-updates, and adds firewall rules for ports 22/TCP, 80/TCP, 443/TCP, 51820/UDP, 21820/UDP.
+`bootstrap-ubuntu-vps.sh` is a one-time root-run bootstrap script for fresh Ubuntu VPS.  
+It:
+- Creates non-root sudo user (optional passwordless sudo)
+- Hardens SSH (disables root login + password auth)
+- Installs & configures: Fail2Ban, UFW, unattended-upgrades, lynis, aide, clamav
+- Asks interactive questions **before** any changes
+- Offers optional Pangolin UDP ports (51820/udp, 21820/udp) in UFW
 
 ## Prerequisites
-- Fresh Ubuntu VPS (20.04+).
-- Root access via SSH.
-- SSH public key ready (for pasting or importing from GitHub/Launchpad).
-- Cloud firewall restricts SSH to your IP.
+- Fresh Ubuntu 22.04 / 24.04 LTS VPS
+- Root SSH access
+- SSH public key ready (paste, GitHub, Launchpad or root fallback)
+- Cloud provider firewall already restricts SSH to your IP
 
 ## Usage
+
 Run as root. Two methods:
 
-### 1. Download and Run Locally
-1. SSH as root.
-2. Download: `wget https://raw.githubusercontent.com/brainxio/bash/main/bootstrap-ubuntu-vps.sh`
-3. Make executable: `chmod +x bootstrap-ubuntu-vps.sh`
-4. Run: `./bootstrap-ubuntu-vps.sh`
-5. Follow prompts: username, password (optional random), SSH key method.
-6. After completion, log out and reconnect as new user.
-7. Post-setup: As new user, run `sudo aideinit && sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db` for AIDE initialization.
+### 1. Download & Run Locally
+```bash
+wget https://raw.githubusercontent.com/brainxio/bash/main/bootstrap-ubuntu-vps.sh
+chmod +x bootstrap-ubuntu-vps.sh
+./bootstrap-ubuntu-vps.sh
+```
 
-### 2. Run Directly from Repo (Web Location)
-1. SSH as root.
-2. Pipe to bash: `curl -sSL https://raw.githubusercontent.com/brainxio/bash/main/bootstrap-ubuntu-vps.sh | sudo bash`
-3. Follow prompts as above.
-4. Reconnect as new user.
-5. Complete AIDE init as above.
+### 2. Run Directly (one-liner)
+```bash
+curl -sSL https://raw.githubusercontent.com/brainxio/bash/main/bootstrap-ubuntu-vps.sh | bash
+```
+
+## Prompts (in order)
+1. Confirm execution
+2. New username
+3. Password (empty = random)
+4. Passwordless sudo? (y/N)
+5. Add Pangolin UDP ports? (y/N)
+6. Enable UFW after setup? (y/N)
+7. SSH key method (1=paste, 2=GitHub, 3=Launchpad, 4=root keys)
+
+## After Completion
+- Log out
+- Reconnect as new user
+- Initialize AIDE database:
+  ```bash
+  sudo aideinit && sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+  ```
 
 ## Security Notes
-- Script generates/displays random password if none provided (for initial sudo; change later).
-- SSH keys required; password auth disabled.
-- Tools auto-configured: Fail2Ban (brute-force protection), UFW (firewall), unattended-upgrades (security patches), rkhunter/lynis/aide/clamav (scans/integrity/AV with cron jobs).
-- Test new user login before closing root session.
+- All questions asked **before** any package install or config change
+- SSH password auth fully disabled after run
+- Random password shown only if generated (needed for first sudo unless passwordless)
+- UFW essentials (22/80/443) always added; Pangolin ports optional
+- Test new user SSH login **before** closing root session
+- ClamAV freshclam, lynis daily cron, unattended-upgrades enabled automatically
