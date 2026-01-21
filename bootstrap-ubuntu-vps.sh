@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Check root
+[ "$EUID" -ne 0 ] && echo "Run as root" && exit 1
+
+# Detect container (e.g., Docker)
+in_container() {
+  grep -qE '(docker|lxc)' /proc/1/cgroup 2>/dev/null && return 0 || return 1
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # All interactive questions FIRST – before any package install or change
 # ──────────────────────────────────────────────────────────────────────────────
@@ -59,37 +67,37 @@ read -rp "Enable UFW after configuration? (y/N): " enable_ufw
 # ──────────────────────────────────────────────────────────────────────────────
 
 install_packages() {
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -yq \
-    fail2ban ufw unattended-upgrades ssh-import-id lynis aide clamav
+  apt update -qq || { echo "apt update failed"; exit 1; }
+  DEBIAN_FRONTEND=noninteractive apt install -yq \
+    fail2ban ufw unattended-upgrades ssh-import-id lynis aide clamav || { echo "Package install failed"; exit 1; }
   apt purge -y postfix >/dev/null 2>&1 || true
-  systemctl disable --now postfix >/dev/null 2>&1 || true
+  if ! in_container; then
+    systemctl disable --now postfix >/dev/null 2>&1 || true
+  fi
 }
 
 create_user() {
-  if id "$USERNAME" &>/dev/null; then
-    echo "❌ User $USERNAME already exists." >&2
-    exit 1
-  fi
+  id "$USERNAME" &>/dev/null && { echo "❌ User $USERNAME exists"; exit 1; }
 
-  useradd --create-home --shell /bin/bash -c "" "$USERNAME"
-  usermod -aG sudo "$USERNAME"
+  useradd --create-home --shell /bin/bash -c "" "$USERNAME" || { echo "useradd failed"; exit 1; }
+  usermod -aG sudo "$USERNAME" || { echo "usermod failed"; exit 1; }
 
   if [[ -z "$PASS" ]]; then
-    PASS=$(openssl rand -base64 36)
+    command -v openssl >/dev/null || { echo "openssl missing"; exit 1; }
+    PASS=$(openssl rand -base64 36) || { echo "openssl rand failed"; exit 1; }
     echo "Generated random password (SSH disabled): $PASS"
   fi
-  echo "$USERNAME:$PASS" | chpasswd
+  echo "$USERNAME:$PASS" | chpasswd || { echo "chpasswd failed"; exit 1; }
 }
 
 enable_passwordless_sudo() {
-  echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$USERNAME"
+  echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$USERNAME" || { echo "sudoers file failed"; exit 1; }
   chmod 0440 "/etc/sudoers.d/$USERNAME"
-  visudo -cf "/etc/sudoers.d/$USERNAME" || { rm -f "/etc/sudoers.d/$USERNAME"; exit 1; }
+  visudo -cf "/etc/sudoers.d/$USERNAME" || { rm -f "/etc/sudoers.d/$USERNAME"; echo "visudo failed"; exit 1; }
 }
 
 setup_ssh_keys() {
-  mkdir -p "/home/$USERNAME/.ssh"
+  mkdir -p "/home/$USERNAME/.ssh" || { echo "mkdir .ssh failed"; exit 1; }
   chmod 700 "/home/$USERNAME/.ssh"
 
   case "$key_choice" in
@@ -100,53 +108,80 @@ setup_ssh_keys() {
   esac
 
   chmod 600 "/home/$USERNAME/.ssh/authorized_keys" 2>/dev/null
-  chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.ssh"
+  chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.ssh" || { echo "chown .ssh failed"; exit 1; }
 }
 
 harden_ssh() {
   local cfg="/etc/ssh/sshd_config"
-  sed -Ei 's/^#?(PermitRootLogin).*/\1 no/' "$cfg"
-  sed -Ei 's/^#?(PasswordAuthentication).*/\1 no/' "$cfg"
-  sed -Ei 's/^#?(UsePAM).*/\1 no/' "$cfg"
+  sed -Ei 's/^#?(PermitRootLogin).*/\1 no/' "$cfg" || { echo "sed PermitRootLogin failed"; exit 1; }
+  sed -Ei 's/^#?(PasswordAuthentication).*/\1 no/' "$cfg" || { echo "sed PasswordAuthentication failed"; exit 1; }
+  sed -Ei 's/^#?(UsePAM).*/\1 no/' "$cfg" || { echo "sed UsePAM failed"; exit 1; }
   rm -f /etc/ssh/sshd_config.d/50-cloud-init.conf 2>/dev/null
 
   sshd -t || { echo "sshd config invalid"; exit 1; }
-  systemctl restart ssh
+  if ! in_container; then
+    systemctl restart ssh || { echo "ssh restart failed"; exit 1; }
+  fi
 }
 
 configure_ufw() {
-  ufw --force reset >/dev/null
-  ufw default deny incoming
-  ufw default allow outgoing
+  ufw --force reset >/dev/null || { echo "ufw reset failed"; exit 1; }
+  ufw default deny incoming || { echo "ufw default deny failed"; exit 1; }
+  ufw default allow outgoing || { echo "ufw default allow failed"; exit 1; }
 
-  # Essentials always
-  ufw allow 22/tcp
-  ufw allow 80/tcp
-  ufw allow 443/tcp
+  ufw allow 22/tcp || { echo "ufw allow 22 failed"; exit 1; }
+  ufw allow 80/tcp || { echo "ufw allow 80 failed"; exit 1; }
+  ufw allow 443/tcp || { echo "ufw allow 443 failed"; exit 1; }
 
   if [[ "$add_pangolin" == "y" || "$add_pangolin" == "Y" ]]; then
-    ufw allow 51820/udp
-    ufw allow 21820/udp
+    ufw allow 51820/udp || { echo "ufw allow 51820 failed"; exit 1; }
+    ufw allow 21820/udp || { echo "ufw allow 21820 failed"; exit 1; }
   fi
 
   echo "Final UFW rules:"
   ufw status
 
   if [[ "$enable_ufw" == "y" || "$enable_ufw" == "Y" ]]; then
-    ufw --force enable
+    ufw --force enable || { echo "ufw enable failed"; exit 1; }
   else
     echo "UFW configured but NOT enabled. Run 'sudo ufw enable' later."
   fi
 }
 
 enable_auto_updates() {
-  echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections
-  dpkg-reconfigure -f noninteractive unattended-upgrades
-  systemctl enable --now unattended-upgrades
+  echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections || { echo "debconf-set-selections failed"; exit 1; }
+  dpkg-reconfigure -f noninteractive unattended-upgrades || { echo "dpkg-reconfigure failed"; exit 1; }
+  if ! in_container; then
+    systemctl enable --now unattended-upgrades || { echo "unattended-upgrades enable failed"; exit 1; }
+  fi
 }
 
 configure_extra_tools() {
-  echo "After login run: sudo aideinit && sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db"
+  cat > /home/$USERNAME/first-login.sh <<'EOF'
+#!/usr/bin/env bash
+
+echo "Initializing AIDE database..."
+sudo aideinit && sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+
+if [ $? -eq 0 ]; then
+  echo "AIDE initialized successfully."
+  # Remove the line we added to .bashrc
+  sed -i '/first-login.sh/d' ~/.bashrc
+  rm -f "$0"
+  echo "first-login.sh completed and removed."
+else
+  echo "AIDE init failed. Check logs and try again manually."
+fi
+EOF
+
+  chown $USERNAME:$USERNAME /home/$USERNAME/first-login.sh
+  chmod 755 /home/$USERNAME/first-login.sh
+
+  # Append one-time execution line to .bashrc
+  echo "# One-time AIDE init - remove after running" >> /home/$USERNAME/.bashrc
+  echo "[ -f ~/first-login.sh ] && ~/first-login.sh" >> /home/$USERNAME/.bashrc
+
+  chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
   cat > /etc/cron.daily/lynis-audit <<'EOF'
 #!/bin/sh
@@ -154,7 +189,9 @@ configure_extra_tools() {
 EOF
   chmod +x /etc/cron.daily/lynis-audit
 
-  systemctl enable --now clamav-freshclam 2>/dev/null
+  if ! in_container; then
+    systemctl enable --now clamav-freshclam 2>/dev/null || { echo "clamav-freshclam enable failed"; exit 1; }
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -171,3 +208,4 @@ enable_auto_updates
 configure_extra_tools
 
 echo "Done. Log out and reconnect as $USERNAME."
+echo "On first login ~/first-login.sh runs automatically to initialize AIDE (self-deletes after success)."
