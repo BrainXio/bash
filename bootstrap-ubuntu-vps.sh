@@ -97,18 +97,33 @@ enable_passwordless_sudo() {
 }
 
 setup_ssh_keys() {
-  mkdir -p "/home/$USERNAME/.ssh" || { echo "mkdir .ssh failed"; exit 1; }
-  chmod 700 "/home/$USERNAME/.ssh"
+  local homedir="/home/$USERNAME"
+  local sshdir="$homedir/.ssh"
+  local authkeys="$sshdir/authorized_keys"
+
+  mkdir -p "$sshdir" || { echo "mkdir .ssh failed"; exit 1; }
+  chown "$USERNAME:$USERNAME" "$sshdir" || { echo "chown .ssh dir failed"; exit 1; }
+  chmod 700 "$sshdir"
 
   case "$key_choice" in
-    1) echo "$key_input" > "/home/$USERNAME/.ssh/authorized_keys" ;;
-    2|3) su - "$USERNAME" -c "ssh-import-id ${prefix}${gh_lp_user}" ;;
-    4) cp /root/.ssh/authorized_keys "/home/$USERNAME/.ssh/authorized_keys" 2>/dev/null || true ;;
-    *) echo "No keys added." ;;
+    1)
+      echo "$key_input" > "$authkeys" || { echo "write authorized_keys failed"; exit 1; }
+      ;;
+    2|3)
+      su - "$USERNAME" -c "ssh-import-id ${prefix}${gh_lp_user}" || { echo "ssh-import-id failed"; exit 1; }
+      ;;
+    4)
+      cp /root/.ssh/authorized_keys "$authkeys" 2>/dev/null || true
+      ;;
+    *)
+      echo "No keys added."
+      return 0
+      ;;
   esac
 
-  chmod 600 "/home/$USERNAME/.ssh/authorized_keys" 2>/dev/null
-  chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.ssh" || { echo "chown .ssh failed"; exit 1; }
+  # Now safe: file exists and is owned by user
+  chown "$USERNAME:$USERNAME" "$authkeys" 2>/dev/null
+  chmod 600 "$authkeys" 2>/dev/null || { echo "chmod authorized_keys failed"; exit 1; }
 }
 
 harden_ssh() {
