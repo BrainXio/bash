@@ -35,10 +35,6 @@ echo "  3) Launchpad (lp:username)"
 echo "  4) Copy root's keys (fallback)"
 read -rp "Choice [1-4]: " key_choice
 
-read -rp "Add Pangolin UDP ports (51820/udp + 21820/udp) to UFW? (y/N): " add_pangolin
-
-read -rp "Enable UFW after configuration? (y/N): " enable_ufw
-
 key_input=""
 gh_lp_user=""
 prefix=""
@@ -53,6 +49,10 @@ case "$key_choice" in
   4) ;;
   *) echo "No keys added." ;;
 esac
+
+read -rp "Add Pangolin UDP ports (51820/udp + 21820/udp) to UFW? (y/N): " add_pangolin
+
+read -rp "Enable UFW after configuration? (y/N): " enable_ufw
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Now start actual work
